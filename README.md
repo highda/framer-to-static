@@ -98,6 +98,9 @@ dist/
 
 ## Known limitations
 
+- **Must be deployed to the server root** — all asset references are absolute paths starting
+  with `/_deps/`. Deploying to a subfolder (e.g. `/mysite/`) will break all assets. The site
+  must be served from `/` on its domain or subdomain.
 - **Route discovery** — routes are found via sitemap.xml + internal link crawl.
   CMS-backed routes that are not linked from any page and not in the sitemap will be
   missed.
