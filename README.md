@@ -19,10 +19,10 @@ node server.js
 # open http://localhost:8080
 ```
 
-Example with element omission during export:
+Example with element hiding during export:
 
 ```bash
-node scripts/export-site.js https://yoursite.com --omit-selector 'div[data-framer-name="Form"]'
+node scripts/export-site.js https://yoursite.com --hide-selector 'div[data-framer-name="Form"]'
 ```
 
 ## Pipeline
@@ -41,14 +41,16 @@ node scripts/export-site.js https://yoursite.com --omit-selector 'div[data-frame
 ## Options
 
 ```
-node scripts/export-site.js <url> [--no-sitemap] [--max-pages N] [--omit-selector SELECTOR]
+node scripts/export-site.js <url> [--no-sitemap] [--max-pages N] [--hide-selector SELECTOR]
 ```
 
 - `--no-sitemap` — skip sitemap.xml discovery (use link crawl only)
 - `--max-pages N` — cap the number of routes crawled (default: 500)
-- `--omit-selector SELECTOR` — remove matching HTML elements from every exported page before writing to `dist/`
-  You can repeat the flag multiple times, and comma-separated selectors are also accepted.
-  Example: `--omit-selector 'div[data-framer-name="Form"]'`
+- `--hide-selector SELECTOR` — inject a `display:none` CSS rule for matching elements into every exported page.
+  Repeat the flag as many times as needed; comma-separated selectors within a single value are also accepted.
+  Because Framer renders many components client-side, DOM removal during export is not reliable — CSS hiding
+  is used instead and takes effect the instant the element is painted, with no visible flash.
+  Example: `--hide-selector 'div[data-framer-name="Form"]' --hide-selector '.cookie-banner'`
 
 ## Local server
 

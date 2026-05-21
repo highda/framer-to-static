@@ -29,8 +29,8 @@ const args = process.argv.slice(2);
 const SITE_ORIGIN = args.find(a => a.startsWith('http'));
 
 if (!SITE_ORIGIN) {
-  console.error('Usage: node extract.js <framer-url> [--pages /path1,/path2,...] [--omit-selector SELECTOR]');
-  console.error('Example: node extract.js https://my-site.framer.app --pages /,/about,/contact --omit-selector \'div[data-framer-name="Form"]\'');
+  console.error('Usage: node extract.js <framer-url> [--pages /path1,/path2,...] [--hide-selector SELECTOR]');
+  console.error('Example: node extract.js https://my-site.framer.app --pages /,/about,/contact --hide-selector \'div[data-framer-name="Form"]\'');
   process.exit(1);
 }
 
@@ -42,7 +42,7 @@ if (pagesIdx !== -1 && args[pagesIdx + 1]) {
 }
 const omitSelectorArgs = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--omit-selector' && args[i + 1]) {
+  if (args[i] === '--hide-selector' && args[i + 1]) {
     omitSelectorArgs.push(args[i + 1]);
     i++;
   }
@@ -60,7 +60,7 @@ const PAGES = pagePaths.map(p => ({
 console.log(`Site: ${SITE_ORIGIN}`);
 console.log(`Pages: ${PAGES.map(p => p.path).join(', ')}`);
 if (OMIT_SELECTORS.length > 0) {
-  console.log(`Omit selectors: ${OMIT_SELECTORS.join(', ')}`);
+  console.log(`Hide selectors: ${OMIT_SELECTORS.join(', ')}`);
 }
 
 // ─── Patterns to strip ──────────────────────────────────────────────────────

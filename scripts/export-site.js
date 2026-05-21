@@ -12,7 +12,7 @@ const originArg = args.find((arg) => arg.startsWith("http"));
 const omitSelectors = [];
 
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--omit-selector" && args[i + 1]) {
+  if (args[i] === "--hide-selector" && args[i + 1]) {
     omitSelectors.push(args[i + 1]);
     i++;
   }
@@ -20,7 +20,7 @@ for (let i = 0; i < args.length; i++) {
 
 if (!originArg) {
   console.error(
-    "Usage: node scripts/export-site.js <origin> [--no-sitemap] [--max-pages N] [--omit-selector SELECTOR]"
+    "Usage: node scripts/export-site.js <origin> [--no-sitemap] [--max-pages N] [--hide-selector SELECTOR]"
   );
   process.exit(1);
 }
@@ -176,7 +176,7 @@ async function main() {
     origin,
     "--pages",
     routes.join(","),
-    ...omitSelectors.flatMap((selector) => ["--omit-selector", selector]),
+    ...omitSelectors.flatMap((selector) => ["--hide-selector", selector]),
   ]);
   runStep("Fetch lazy chunks", [join("scripts", "fetch-lazy-chunks.js")]);
   runStep("Fetch Framer modules", [join("scripts", "fetch-framer-modules.js")]);
