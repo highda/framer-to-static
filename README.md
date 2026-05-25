@@ -5,6 +5,8 @@ Site-agnostic scripts for exporting a Framer site into a self-hosted static mirr
 The pipeline downloads every page, asset, JS chunk, font, CMS binary, and icon module
 referenced by the live site and rewrites all URLs to local `/_deps/` paths. The result
 works on Apache, nginx, or any static host — no CDN, no service worker, no runtime shims.
+For Framer CMS byte-range fetches, use either the default server-assisted mode or `--static`
+to pre-bake `.framercms` slices for fully static hosting.
 
 ## Requirements
 
@@ -34,14 +36,14 @@ node scripts/export-site.js https://yoursite.com --hide-selector 'div[data-frame
 | 1 | `extract.js` | Fetches every page, downloads CDN assets, rewrites HTML/JS URLs to `/_deps/` |
 | 2 | `fetch-lazy-chunks.js` | Downloads missing lazy `.mjs` chunks and `.framercms` CMS binaries referenced in JS |
 | 3 | `fetch-framer-modules.js` | Downloads `framer.com/m/` icon wrapper modules and rewrites their CDN imports |
-| 4 | `post-process.js` | Strips Framer editor bootstrap and analytics script tags from HTML; rewrites any remaining CMS path aliases in generated JS; downloads third-party fonts (`fonts.gstatic.com`) and rewrites URLs to local paths |
-| 5 | `rewrite-framercms.js` | Parses `.framercms` chunk and index files, rewrites image URLs from CDN to local paths, corrects byte-range pointer offsets in index files, downloads any referenced images that are missing |
+| 4 | `post-process.js` | Strips Framer editor bootstrap and analytics script tags from HTML; rewrites any remaining CMS path aliases in generated JS; downloads third-party fonts (`fonts.gstatic.com`) and rewrites URLs to local paths; writes Apache/nginx hosting config |
+| 5 | `rewrite-framercms.js` | Parses `.framercms` chunk and index files, rewrites image URLs from CDN to local paths, corrects byte-range pointer offsets in index files, downloads any referenced images that are missing, and in `--static` mode pre-bakes byte-slice files after offsets are finalized |
 | 6 | `audit-missing.js` | Full-scan safety net: finds any remaining `framerusercontent.com` references and downloads them |
 
 ## Options
 
 ```
-node scripts/export-site.js <url> [--no-sitemap] [--max-pages N] [--hide-selector SELECTOR]
+ node scripts/export-site.js <url> [--no-sitemap] [--max-pages N] [--hide-selector SELECTOR] [--static]
 ```
 
 - `--no-sitemap` — skip sitemap.xml discovery (use link crawl only)
@@ -51,14 +53,23 @@ node scripts/export-site.js <url> [--no-sitemap] [--max-pages N] [--hide-selecto
   Because Framer renders many components client-side, DOM removal during export is not reliable — CSS hiding
   is used instead and takes effect the instant the element is painted, with no visible flash.
   Example: `--hide-selector 'div[data-framer-name="Form"]' --hide-selector '.cookie-banner'`
+- `--static` — pre-bake `.framercms.<from>-<to>` slice files and patch the exported JS to request them directly.
+  Use this for fully static hosts with no PHP/FastCGI and no special `.framercms` rewrite rules.
 
 ## Local server
 
 ```bash
-node server.js [port]   # default port: 8080
+ node server.js [port] [--no-rewrite]   # default port: 8080
 ```
 
 The server serves `dist/` with SPA-style routing (`/about` → `dist/about/index.html`).
+
+By default the server handles `.framercms?range=FROM-TO` requests in memory, which is
+correct for non-static exports (where the browser still sends range queries).
+
+Pass `--no-rewrite` (alias `--static`) to disable that slicing and serve all files
+verbatim — use this when validating a `--static` export whose JS was patched to request
+`.framercms.FROM-TO` slice files directly.
 
 It also acts as a caching proxy fallback for `/_deps/framer/m/` and `/_deps/modules/`
 files that are missing locally. In normal exports these files are pre-downloaded by
@@ -70,13 +81,7 @@ files that are missing locally. In normal exports these files are pre-downloaded
 npm run export    # export https://janskydundera.com (adjust URL in package.json)
 npm run serve     # node server.js
 npm run audit     # check dist/ for remaining external references
-npm run inspect   # usage: npm run inspect -- dist/_deps/modules/.../file.framercms
 ```
-
-## Dev utilities
-
-- `scripts/inspect-framercms.js <file>` — read-only parser that pretty-prints the
-  structure of a `.framercms` chunk or index file. Useful for debugging CMS binary issues.
 
 ## Output layout
 

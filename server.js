@@ -19,7 +19,13 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = join(__dirname, 'dist');
-const PORT = parseInt(process.argv[2] || '8080', 10);
+const PORT = parseInt(process.argv.find(a => /^\d+$/.test(a)) || '8080', 10);
+// --no-rewrite (alias: --static): disable server-side .framercms?range= byte slicing.
+// Use this when validating a --static export whose JS was patched to request
+// .framercms.FROM-TO slice files directly, or to simulate any plain static host.
+// Without this flag the server slices .framercms files in memory, which is the
+// correct behaviour when serving a non-static (PHP/.htaccess) export locally.
+const NO_REWRITE = process.argv.includes('--no-rewrite') || process.argv.includes('--static');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -69,15 +75,21 @@ async function serve(req, res) {
       if (s.isFile()) {
         const ext = extname(filePath.replace(/@[\d.]+$/, '')).toLowerCase();
         const mime = getMimeType(filePath);
-        let body = await readFile(filePath);
+        let body;
         if (filePath.endsWith('.framercms')) {
           const rangeParam = requestUrl.searchParams.get('range');
-          if (rangeParam) {
+          if (rangeParam && !NO_REWRITE) {
+            // In-memory slice (default dev-server behaviour).
+            body = await readFile(filePath);
             const [start, end] = rangeParam.split('-').map(Number);
             if (Number.isFinite(start) && Number.isFinite(end)) {
               body = body.slice(start, end + 1);
             }
+          } else {
+            body = await readFile(filePath);
           }
+        } else {
+          body = await readFile(filePath);
         }
         const headers = { 'Content-Type': mime };
         if (urlPath.startsWith('/_deps/')) {
@@ -102,11 +114,14 @@ async function serve(req, res) {
     try {
       const s = await stat(filePath);
       if (s.isFile()) {
-        let body = await readFile(filePath);
         const rangeParam = requestUrl.searchParams.get('range');
-        if (rangeParam) {
+        let body;
+        if (rangeParam && !NO_REWRITE) {
+          body = await readFile(filePath);
           const [start, end] = rangeParam.split('-').map(Number);
           body = body.slice(start, end + 1);
+        } else {
+          body = await readFile(filePath);
         }
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable' });
         res.end(body);
@@ -178,5 +193,6 @@ async function serve(req, res) {
 
 createServer(serve).listen(PORT, () => {
   console.log(`\n🚀 Local server running at http://localhost:${PORT}\n`);
+  if (NO_REWRITE) console.log('   Mode: no-rewrite (plain file serving, no .framercms range slicing)\n');
   console.log('   Press Ctrl+C to stop\n');
 });

@@ -192,7 +192,12 @@ async function downloadAsset(url, localPath) {
 async function downloadCdnAsset(url) {
   const localPath = cdnUrlToLocalPath(url);
   if (!localPath) return;
-  await downloadAsset(url, localPath);
+  // Always fetch images at full resolution — strip any size-limiting query params
+  // (e.g. ?scale-down-to=512) that Framer CDN appends for responsive srcsets.
+  const fetchUrl = localPath.startsWith('/_deps/images/')
+    ? url.split('?')[0]
+    : url;
+  await downloadAsset(fetchUrl, localPath);
 }
 
 function getUniqueAssetUrls(urls) {

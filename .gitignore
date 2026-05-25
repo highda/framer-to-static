@@ -18,3 +18,6 @@ Thumbs.db
 .claude/
 .vscode/
 *.local
+.mcp-chrome-profile/
+tmp/
+screenshots/

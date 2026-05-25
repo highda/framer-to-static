@@ -3,12 +3,19 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "fs";
 import { basename, dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { parse } from "@babel/parser";
+import babelTraverse from "@babel/traverse";
+import generateModule from "@babel/generator";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST = join(__dirname, "..", "dist");
 const DEPS = join(DIST, "_deps");
 const MODULES = join(DEPS, "modules");
 const IMAGE_IDS = new Set();
+const STATIC_MODE = process.argv.includes("--static");
+const STATIC_TILE_SIZE = 4096;
+const traverse = babelTraverse.default;
+const generate = generateModule.default;
 
 function walk(dir, cb) {
   if (!existsSync(dir)) return;
@@ -523,7 +530,7 @@ function patchIndexRangeReferences(indexFilePath, rangeUpdates) {
     let next = original;
     for (const update of rangeUpdates) {
       const pattern = new RegExp(
-        `range:\\{from:${update.oldFrom},to:${update.oldTo}\\}(?=,url:new URL\\(\\\`\\./${targetNameRegex}\\\`)`,
+        `range:\\{from:${update.oldFrom},to:${update.oldTo}\\}(?=,url:new URL\\(([\"\`])\\./${targetNameRegex}\\1)`,
         "g"
       );
       const matches = next.match(pattern);
@@ -681,6 +688,292 @@ function rewriteIndexFile(filePath, chunkIdMaps) {
   };
 }
 
+function collectFramercmsSlicePlan() {
+  // indexFilePath -> Set<"from-toInclusive">
+  const indexSlices = new Map();
+  // indexFilePath -> chunkFilePath[] (indexed by chunkId)
+  const chunksByIndex = new Map();
+
+  walk(DEPS, (filePath) => {
+    if (!/\.(mjs|js)$/i.test(filePath)) return;
+    const content = readFileSync(filePath, "utf8");
+    const fileDir = dirname(filePath);
+
+    // Parse per-collection blocks so each index set maps to its own sibling chunk set.
+    // This avoids cross-locale mismatches when both default and translated locales are in one file.
+    const collectionBlockRe = /chunks:\[([\s\S]*?)\]\s*,\s*indexes:\[([\s\S]*?)\]/g;
+    let collectionBlock;
+    while ((collectionBlock = collectionBlockRe.exec(content)) !== null) {
+      const chunkFiles = [];
+      const chunkEntryRe = /new URL\(([\"`])\.\/([^"`]+\.framercms)\1/g;
+      let chunkEntry;
+      while ((chunkEntry = chunkEntryRe.exec(collectionBlock[1])) !== null) {
+        chunkFiles.push(join(fileDir, chunkEntry[2]));
+      }
+
+      const indexRangeRe = /range:\{from:(\d+),to:(\d+)\}[^}]*?url:new URL\(([\"`])\.\/([^"`]+\.framercms)\3/g;
+      let match;
+      while ((match = indexRangeRe.exec(collectionBlock[2])) !== null) {
+        const from = parseInt(match[1], 10);
+        const to = parseInt(match[2], 10);
+        const indexFilePath = join(fileDir, match[4]);
+        if (!indexSlices.has(indexFilePath)) indexSlices.set(indexFilePath, new Set());
+        indexSlices.get(indexFilePath).add(`${from}-${to - 1}`);
+        if (chunkFiles.length > 0 && !chunksByIndex.has(indexFilePath)) {
+          chunksByIndex.set(indexFilePath, chunkFiles);
+        }
+      }
+    }
+  });
+
+  const chunkSlices = new Map();
+  for (const [indexFilePath] of indexSlices) {
+    if (!existsSync(indexFilePath)) continue;
+    const chunkFiles = chunksByIndex.get(indexFilePath) || [];
+    try {
+      const reader = makeReader(readFileSync(indexFilePath));
+      // Track the full span per chunk for this specific index (locale).
+      // Listing pages load all records at once and the runtime merges the individual
+      // per-record ranges into a single combined request covering the whole span.
+      const spanByChunk = new Map(); // chunkFilePath -> { minFrom, maxTo }
+      while (!reader.done()) {
+        const model = readIndexModel(reader);
+        for (const entry of model.entries) {
+          const chunkFilePath = chunkFiles[entry.pointer.chunkId];
+          if (!chunkFilePath || !existsSync(chunkFilePath)) continue;
+          if (!chunkSlices.has(chunkFilePath)) chunkSlices.set(chunkFilePath, new Set());
+          const from = entry.pointer.offset;
+          const to = entry.pointer.offset + entry.pointer.length - 1;
+          chunkSlices.get(chunkFilePath).add(`${from}-${to}`);
+          const span = spanByChunk.get(chunkFilePath) || { minFrom: Infinity, maxTo: -Infinity };
+          if (from < span.minFrom) span.minFrom = from;
+          if (to > span.maxTo) span.maxTo = to;
+          spanByChunk.set(chunkFilePath, span);
+        }
+      }
+      // Add the merged full-span slice for each chunk referenced by this index.
+      for (const [chunkFilePath, { minFrom, maxTo }] of spanByChunk) {
+        if (minFrom !== Infinity) chunkSlices.get(chunkFilePath).add(`${minFrom}-${maxTo}`);
+      }
+    } catch (err) {
+      console.warn(`  Warning: could not parse index ${basename(indexFilePath)}: ${err.message}`);
+    }
+  }
+
+  return { indexSlices, chunkSlices };
+}
+
+function writePrebakedSlices(sliceMap) {
+  let written = 0;
+  for (const [filePath, ranges] of sliceMap) {
+    if (!existsSync(filePath)) continue;
+    const buf = readFileSync(filePath);
+    for (const range of ranges) {
+      const [from, toInclusive] = range.split("-").map(Number);
+      writeFileSync(`${filePath}.${range}`, buf.slice(from, toInclusive + 1));
+      written++;
+    }
+  }
+  return written;
+}
+
+function writeTiledSlices(filePaths, tileSize = STATIC_TILE_SIZE) {
+  let written = 0;
+  for (const filePath of filePaths) {
+    if (!existsSync(filePath)) continue;
+    const buf = readFileSync(filePath);
+    let lastFrom = 0;
+    let lastToInclusive = -1;
+    for (let from = 0; from < buf.length; from += tileSize) {
+      const toInclusive = Math.min(buf.length - 1, from + tileSize - 1);
+      writeFileSync(`${filePath}.${from}-${toInclusive}`, buf.slice(from, toInclusive + 1));
+      lastFrom = from;
+      lastToInclusive = toInclusive;
+      written++;
+    }
+    // Alias the final partial tile to a full tile-end suffix so ceil-based
+    // runtime lookups (e.g. start-(start+tile-1)) still resolve on static hosts.
+    if (lastToInclusive >= 0) {
+      const fullTileEnd = lastFrom + tileSize - 1;
+      if (lastToInclusive < fullTileEnd) {
+        writeFileSync(`${filePath}.${lastFrom}-${fullTileEnd}`, buf.slice(lastFrom, lastToInclusive + 1));
+        written++;
+      }
+    }
+  }
+  return written;
+}
+
+function listFramercmsFilesByKind(kind) {
+  const suffix = kind === "index" ? "-indexes-" : "-chunk-";
+  const files = [];
+  walk(DIST, (filePath) => {
+    if (!filePath.endsWith(".framercms")) return;
+    if (!basename(filePath).includes(suffix)) return;
+    files.push(filePath);
+  });
+  return files;
+}
+
+function patchStaticFramercmsFetches() {
+  let patchedFiles = 0;
+
+  walk(DEPS, (filePath) => {
+    if (!/\.(mjs|js)$/i.test(filePath)) return;
+    const original = readFileSync(filePath, "utf8");
+    if (!original.includes("searchParams.set")) return;
+
+    let ast;
+    try {
+      ast = parse(original, { sourceType: "module" });
+    } catch {
+      return;
+    }
+
+    let fileChanged = false;
+    traverse(ast, {
+      Function(path) {
+        const fn = path.node;
+        if (!fn.async || !fn.body || fn.body.type !== "BlockStatement") return;
+        if (fn.params.length < 2) return;
+        if (fn.params[0].type !== "Identifier" || fn.params[1].type !== "Identifier") return;
+        const urlParam = fn.params[0].name;
+        const rangesParam = fn.params[1].name;
+        const body = fn.body.body;
+
+        let mergedRangesVar = null;
+        let urlVar = null;
+        for (const stmt of body) {
+          if (stmt.type !== "VariableDeclaration") continue;
+          for (const decl of stmt.declarations) {
+            if (
+              decl.id.type === "Identifier" &&
+              decl.init?.type === "CallExpression" &&
+              decl.init.arguments.length > 0 &&
+              decl.init.arguments[0].type === "Identifier" &&
+              decl.init.arguments[0].name === rangesParam
+            ) {
+              mergedRangesVar = decl.id.name;
+            }
+            if (
+              decl.id.type === "Identifier" &&
+              decl.init?.type === "NewExpression" &&
+              decl.init.callee.type === "Identifier" &&
+              decl.init.callee.name === "URL" &&
+              decl.init.arguments.length > 0 &&
+              decl.init.arguments[0].type === "Identifier" &&
+              decl.init.arguments[0].name === urlParam
+            ) {
+              urlVar = decl.id.name;
+            }
+          }
+        }
+        if (!mergedRangesVar || !urlVar) return;
+
+        for (let i = 0; i < body.length - 1; i++) {
+          const s1 = body[i];
+          const s2 = body[i + 1];
+          if (s1.type !== "ExpressionStatement" || s2.type !== "VariableDeclaration") continue;
+          const c1 = s1.expression;
+          if (
+            c1.type !== "CallExpression" ||
+            c1.callee.type !== "MemberExpression" ||
+            c1.callee.property.type !== "Identifier" ||
+            c1.callee.property.name !== "set" ||
+            c1.callee.object.type !== "MemberExpression" ||
+            c1.callee.object.property.type !== "Identifier" ||
+            c1.callee.object.property.name !== "searchParams" ||
+            c1.callee.object.object.type !== "Identifier" ||
+            c1.callee.object.object.name !== urlVar
+          ) {
+            continue;
+          }
+          const d0 = s2.declarations[0];
+          if (
+            s2.declarations.length !== 1 ||
+            !d0 ||
+            d0.id.type !== "Identifier" ||
+            d0.init?.type !== "AwaitExpression" ||
+            d0.init.argument.type !== "CallExpression" ||
+            d0.init.argument.callee.type !== "Identifier" ||
+            d0.init.argument.arguments.length !== 1 ||
+            d0.init.argument.arguments[0].type !== "Identifier" ||
+            d0.init.argument.arguments[0].name !== urlVar
+          ) {
+            continue;
+          }
+
+          const responseVar = d0.id.name;
+          const fetchFnVar = d0.init.argument.callee.name;
+          const replacementSrc = `
+let ${responseVar};
+let __cdxFileSize;
+const __cdxFetchSlice = async (__cdxRange) => {
+  let __cdxFrom = __cdxRange.from, __cdxTo = __cdxRange.to;
+  let __cdxExactUrl = new URL(${urlVar}.href + "." + __cdxFrom + "-" + (__cdxTo - 1));
+  let __cdxExactResp = await ${fetchFnVar}(__cdxExactUrl);
+  if (__cdxExactResp.status === 200) return new Uint8Array(await __cdxExactResp.arrayBuffer());
+  let __cdxTile = ${STATIC_TILE_SIZE};
+  let __cdxStart = Math.floor(__cdxFrom / __cdxTile) * __cdxTile;
+  let __cdxEnd = Math.ceil(__cdxTo / __cdxTile) * __cdxTile - 1;
+  if (__cdxFileSize === undefined) {
+    try {
+      let __cdxHead = await ${fetchFnVar}(${urlVar}, { method: "HEAD" });
+      if (__cdxHead.status === 200) {
+        let __cdxLen = Number(__cdxHead.headers.get("content-length"));
+        if (Number.isFinite(__cdxLen) && __cdxLen > 0) __cdxFileSize = __cdxLen;
+      }
+    } catch {}
+    if (!Number.isFinite(__cdxFileSize)) __cdxFileSize = null;
+  }
+  if (__cdxFileSize !== null) __cdxEnd = Math.min(__cdxEnd, __cdxFileSize - 1);
+  let __cdxParts = [];
+  for (let __cdxPos = __cdxStart; __cdxPos <= __cdxEnd; __cdxPos += __cdxTile) {
+    let __cdxPosEnd = Math.min(__cdxEnd, __cdxPos + __cdxTile - 1);
+    let __cdxUrl = new URL(${urlVar}.href + "." + __cdxPos + "-" + __cdxPosEnd);
+    let __cdxResp = await ${fetchFnVar}(__cdxUrl);
+    if (__cdxResp.status !== 200) {
+      if (__cdxExactResp.status !== 200) throw Error(\`Request failed: \${__cdxResp.status} \${__cdxResp.statusText}\`);
+      return new Uint8Array(await __cdxExactResp.arrayBuffer());
+    }
+    __cdxParts.push(new Uint8Array(await __cdxResp.arrayBuffer()));
+  }
+  let __cdxTotal = __cdxParts.reduce((e, t) => e + t.length, 0);
+  let __cdxBuf = new Uint8Array(__cdxTotal);
+  let __cdxOff = 0;
+  for (let __cdxPart of __cdxParts) { __cdxBuf.set(__cdxPart, __cdxOff); __cdxOff += __cdxPart.length; }
+  return __cdxBuf.slice(__cdxFrom - __cdxStart, __cdxFrom - __cdxStart + (__cdxTo - __cdxFrom));
+};
+if (${mergedRangesVar}.length === 1) {
+  let __cdxSingle = await __cdxFetchSlice(${mergedRangesVar}[0]);
+  ${responseVar} = { status: 200, arrayBuffer: async () => __cdxSingle.buffer };
+} else {
+  let __cdxParts = await Promise.all(${mergedRangesVar}.map(__cdxFetchSlice));
+  let __cdxTotal = __cdxParts.reduce((e, t) => e + t.length, 0);
+  let __cdxMerged = new Uint8Array(__cdxTotal);
+  let __cdxOff = 0;
+  for (let __cdxPart of __cdxParts) { __cdxMerged.set(__cdxPart, __cdxOff); __cdxOff += __cdxPart.length; }
+  ${responseVar} = { status: 200, arrayBuffer: async () => __cdxMerged.buffer };
+}
+`;
+          const replacement = parse(replacementSrc, { sourceType: "module" }).program.body;
+          body.splice(i, 2, ...replacement);
+          fileChanged = true;
+          break;
+        }
+      },
+    });
+
+    if (fileChanged) {
+      const out = generate(ast, { minified: true, comments: false }).code;
+      writeFileSync(filePath, out);
+      patchedFiles++;
+    }
+  });
+
+  return patchedFiles;
+}
+
 async function downloadMissingImages() {
   const imagesDir = join(DEPS, "images");
   mkdirSync(imagesDir, { recursive: true });
@@ -814,6 +1107,19 @@ async function main() {
     console.log(`Skipped ${skippedFiles} CMS files with unsupported encoding`);
   }
   await downloadMissingImages();
+  if (STATIC_MODE) {
+    console.log("Pre-baking static .framercms slices...");
+    const { indexSlices, chunkSlices } = collectFramercmsSlicePlan();
+    const indexSliceCount = writePrebakedSlices(indexSlices);
+    const exactChunkSliceCount = writePrebakedSlices(chunkSlices);
+    const chunkFilePaths = [...new Set([...chunkSlices.keys(), ...listFramercmsFilesByKind("chunk")])];
+    const indexFilePaths = [...new Set([...indexSlices.keys(), ...listFramercmsFilesByKind("index")])];
+    const tiledChunkSliceCount = writeTiledSlices(chunkFilePaths, STATIC_TILE_SIZE);
+    const tiledIndexSliceCount = writeTiledSlices(indexFilePaths, STATIC_TILE_SIZE);
+    const patchedFetchFiles = patchStaticFramercmsFetches();
+    console.log(`Wrote ${indexSliceCount} index slices, ${exactChunkSliceCount} exact chunk slices, ${tiledIndexSliceCount} tiled index slices, and ${tiledChunkSliceCount} tiled chunk slices (${STATIC_TILE_SIZE}B)`);
+    console.log(`Patched static .framercms fetch logic in ${patchedFetchFiles} JS files`);
+  }
 }
 
 main().catch((err) => {

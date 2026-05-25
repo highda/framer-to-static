@@ -8,11 +8,13 @@
   "scripts": {
     "export": "node scripts/export-site.js https://janskydundera.com",
     "serve": "node server.js",
-    "audit": "node scripts/audit-missing.js",
-    "inspect": "node scripts/inspect-framercms.js",
-    "test": "node --test"
+    "audit": "node scripts/audit-missing.js"
   },
   "dependencies": {
+    "@babel/generator": "^7.29.1",
+    "@babel/parser": "^7.29.3",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
     "cheerio": "^1.2.0"
   }
 }

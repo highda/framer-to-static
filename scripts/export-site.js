@@ -10,6 +10,7 @@ const ROOT = join(__dirname, "..");
 const args = process.argv.slice(2);
 const originArg = args.find((arg) => arg.startsWith("http"));
 const omitSelectors = [];
+const isStatic = args.includes("--static");
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--hide-selector" && args[i + 1]) {
@@ -20,7 +21,7 @@ for (let i = 0; i < args.length; i++) {
 
 if (!originArg) {
   console.error(
-    "Usage: node scripts/export-site.js <origin> [--no-sitemap] [--max-pages N] [--hide-selector SELECTOR]"
+    "Usage: node scripts/export-site.js <origin> [--no-sitemap] [--max-pages N] [--hide-selector SELECTOR] [--static]"
   );
   process.exit(1);
 }
@@ -180,8 +181,14 @@ async function main() {
   ]);
   runStep("Fetch lazy chunks", [join("scripts", "fetch-lazy-chunks.js")]);
   runStep("Fetch Framer modules", [join("scripts", "fetch-framer-modules.js")]);
-  runStep("Post-process export", [join("scripts", "post-process.js")]);
-  runStep("Rewrite CMS chunks", [join("scripts", "rewrite-framercms.js")]);
+  runStep("Post-process export", [
+    join("scripts", "post-process.js"),
+    ...(isStatic ? ["--static"] : []),
+  ]);
+  runStep("Rewrite CMS chunks", [
+    join("scripts", "rewrite-framercms.js"),
+    ...(isStatic ? ["--static"] : []),
+  ]);
   runStep("Audit missing assets", [join("scripts", "audit-missing.js")]);
 }
 
