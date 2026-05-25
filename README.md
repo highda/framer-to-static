@@ -83,6 +83,38 @@ npm run serve     # node server.js
 npm run audit     # check dist/ for remaining external references
 ```
 
+## Hosting setup (production)
+
+### Export mode decision
+
+- **Non-static (default)**: browser still requests `.framercms?range=FROM-TO`; server must slice bytes correctly.
+- **Static (`--static`)**: exporter pre-bakes slice files and patches JS to request them directly; no PHP/FastCGI needed.
+
+### Apache (non-static export)
+
+Non-static exports require:
+
+- `mod_rewrite` enabled (for `.framercms` rewrite to `framercms.php`)
+- `mod_mime` enabled (serve `.mjs` with JavaScript MIME)
+- `.htaccess` overrides enabled (`AllowOverride All` or equivalent)
+- PHP enabled (to execute generated `dist/framercms.php`)
+
+Without this, Framer CMS requests may return full files instead of byte slices and fail with:
+`Request failed: Unexpected response length`.
+
+### nginx (non-static export)
+
+Use the generated `dist/nginx.conf.example` and ensure:
+
+- `location ~* \.framercms$` forwards to PHP-FPM (`framercms.php`)
+- `.mjs` files are served with JavaScript MIME type
+
+### Trailing slash behavior
+
+Framer links may use no-trailing-slash routes (for example `/project/bolfanek`).
+The generated Apache/nginx configs intentionally map both `/route` and `/route/`
+to the same `index.html` to avoid refresh-time `403`/`404` on directory routes.
+
 ## Output layout
 
 ```
@@ -100,6 +132,12 @@ dist/
     framer/m/      # icon wrapper modules (framer.com/m/...)
     third-party-assets/  # fontshare, Google Fonts, and other third-party fonts
 ```
+
+### UTF-8 route canonicalization
+
+- Exported route directories are canonicalized to decoded UTF-8 path segments (for example `news/vítěz-.../index.html`).
+- The exporter does not duplicate percent-encoded aliases.
+- If a front proxy returns `404` for percent-encoded URLs that map to existing UTF-8 routes, fix URI normalization/routing in the proxy layer (for example nginx/nginx-proxy-manager) rather than duplicating files in `dist/`.
 
 ## Known limitations
 

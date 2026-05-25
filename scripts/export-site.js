@@ -60,7 +60,7 @@ function shouldSkipPath(pathname) {
   );
 }
 
-function extractInternalLinks(html, pageOrigin) {
+function extractInternalLinks(html, pageOrigin, pageUrl) {
   const found = new Set();
   const hrefPattern = /\shref="([^"]+)"/g;
   let match;
@@ -77,7 +77,7 @@ function extractInternalLinks(html, pageOrigin) {
     }
 
     try {
-      const url = new URL(rawHref, pageOrigin);
+      const url = new URL(rawHref, pageUrl);
       if (url.origin !== pageOrigin) continue;
       if (shouldSkipPath(url.pathname)) continue;
       found.add(normalizePathname(url.pathname));
@@ -130,7 +130,7 @@ async function discoverFromSitemap(siteOrigin) {
 }
 
 async function crawlRoutes(siteOrigin, seedRoutes, limit) {
-  const confirmed = new Set(seedRoutes);
+  const confirmed = new Set();
   const queued = new Set(seedRoutes);
   const queue = [...seedRoutes];
 
@@ -141,7 +141,7 @@ async function crawlRoutes(siteOrigin, seedRoutes, limit) {
     try {
       const html = await fetchHtml(url);
       confirmed.add(route);
-      const links = extractInternalLinks(html, siteOrigin);
+      const links = extractInternalLinks(html, siteOrigin, url);
       for (const link of links) {
         if (queued.has(link)) continue;
         queued.add(link);

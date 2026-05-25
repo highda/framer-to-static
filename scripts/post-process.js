@@ -162,17 +162,29 @@ DirectoryIndex index.html
 # .mjs must be served as JavaScript or browsers refuse ES module execution.
 <IfModule mod_mime.c>
     AddType application/javascript .mjs
+    # Framer wrapper modules use names like ArrowUpward.js@0.0.32
+    <FilesMatch "\\.js@[^/]+$">
+        ForceType application/javascript
+    </FilesMatch>
 </IfModule>
 
 # ── SPA-style routing ───────────────────────────────────────────────────────────
 # /some/path → /some/path/index.html when the exact file doesn't exist.
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteCond %{REQUEST_URI} !/$
+    RewriteRule ^ %{REQUEST_URI}/index.html [L]
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
+    # Avoid rewrite loops for extension-like requests (/favicon.ico, /x/index.html, etc.).
+    RewriteCond %{REQUEST_URI} !\\.[^/]+$
     RewriteCond %{REQUEST_URI} !\\.framercms
-    RewriteRule ^(.*)$ /$1/index.html [L]
+    RewriteRule ^ %{REQUEST_URI}/index.html [L]
 </IfModule>
+
+# ── 404 page (best effort, host-dependent in static-only environments) ─────────
+ErrorDocument 404 /404.html
 `, 'utf-8');
 
   writeFileSync(join(DIST, 'nginx.conf.example'), `# Framer static export — nginx server block (static mode, no PHP)
@@ -193,16 +205,26 @@ server {
         try_files $uri =404;
     }
 
+    # Framer wrapper modules use names like ArrowUpward.js@0.0.32.
+    location ~* \\.js@[^/]+$ {
+        default_type application/javascript;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
     # Cache _deps/ assets forever (all filenames are content-hashed).
     location ^~ /_deps/ {
         expires max;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
-    # SPA routing: bare paths → directory index.html.
+    # SPA routing: keep no-trailing-slash URLs working on hard refresh.
+    # Prefer /path/index.html before /path/ so /project/bolfanek does not redirect.
     location / {
-        try_files $uri $uri/ $uri/index.html =404;
+        try_files $uri $uri/index.html $uri/ =404;
     }
+
+    error_page 404 /404.html;
 }
 `, 'utf-8');
 
@@ -296,17 +318,29 @@ DirectoryIndex index.html
 # .mjs must be served as JavaScript or browsers refuse ES module execution.
 <IfModule mod_mime.c>
     AddType application/javascript .mjs
+    # Framer wrapper modules use names like ArrowUpward.js@0.0.32
+    <FilesMatch "\\.js@[^/]+$">
+        ForceType application/javascript
+    </FilesMatch>
 </IfModule>
 
 # ── SPA-style routing ───────────────────────────────────────────────────────────
 # /some/path → /some/path/index.html when the exact file doesn't exist.
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteCond %{REQUEST_URI} !/$
+    RewriteRule ^ %{REQUEST_URI}/index.html [L]
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
+    # Avoid rewrite loops for extension-like requests (/favicon.ico, /x/index.html, etc.).
+    RewriteCond %{REQUEST_URI} !\\.[^/]+$
     RewriteCond %{REQUEST_URI} !\\.framercms$
-    RewriteRule ^(.*)$ /$1/index.html [L]
+    RewriteRule ^ %{REQUEST_URI}/index.html [L]
 </IfModule>
+
+# ── 404 page (served by Apache when route/file is missing) ─────────────────────
+ErrorDocument 404 /404.html
 `, 'utf-8');
 
   writeFileSync(join(DIST, 'nginx.conf.example'), `# Framer static export — nginx server block
@@ -322,6 +356,13 @@ server {
 
     # .mjs files must be served as JavaScript for ES module imports to work.
     location ~* \\.mjs$ {
+        default_type application/javascript;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # Framer wrapper modules use names like ArrowUpward.js@0.0.32.
+    location ~* \\.js@[^/]+$ {
         default_type application/javascript;
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;
@@ -348,10 +389,13 @@ server {
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
-    # SPA routing: bare paths → directory index.html.
+    # SPA routing: keep no-trailing-slash URLs working on hard refresh.
+    # Prefer /path/index.html before /path/ so /project/bolfanek does not redirect.
     location / {
-        try_files $uri $uri/ $uri/index.html =404;
+        try_files $uri $uri/index.html $uri/ =404;
     }
+
+    error_page 404 /404.html;
 }
 `, 'utf-8');
 

@@ -49,12 +49,28 @@ for (let i = 0; i < args.length; i++) {
 }
 const OMIT_SELECTORS = normalizeOmitSelectors(omitSelectorArgs);
 
+function routePathToOutputFile(routePath) {
+  if (routePath === '/') return 'index.html';
+  const trimmed = routePath.replace(/^\//, '').replace(/\/$/, '');
+  const decoded = trimmed
+    .split('/')
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment;
+      }
+    })
+    .join('/');
+  return `${decoded}/index.html`;
+}
+
 // Convert page paths to {path, file} pairs.
-// Directory index structure: /about → about/index.html
-// This works on Apache and nginx without any URL rewrite config.
+// Directory index structure: /about -> about/index.html
+// Route segments are decoded for filesystem compatibility on Apache/nginx.
 const PAGES = pagePaths.map(p => ({
   path: p,
-  file: p === '/' ? 'index.html' : p.replace(/^\//, '').replace(/\/$/, '') + '/index.html',
+  file: routePathToOutputFile(p),
 }));
 
 console.log(`Site: ${SITE_ORIGIN}`);
@@ -186,6 +202,26 @@ async function downloadAsset(url, localPath) {
     console.log(`  ✓ ${localPath} (${(buffer.length / 1024).toFixed(1)}KB)`);
   } catch (err) {
     console.warn(`  ⚠ Failed: ${url} — ${err.message}`);
+  }
+}
+
+async function downloadSiteFile(pathname, localPath = pathname) {
+  const url = `${SITE_ORIGIN}${pathname}`;
+  const outPath = join(DIST, localPath.replace(/^\//, ''));
+  if (existsSync(outPath)) return false;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
+      redirect: 'follow',
+    });
+    if (!res.ok) return false;
+    const buf = Buffer.from(await res.arrayBuffer());
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, buf);
+    console.log(`  ✓ ${localPath} (${(buf.length / 1024).toFixed(1)}KB)`);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -411,10 +447,11 @@ async function main() {
     }
   }
 
-  // Try to get 404 page
+  // Try to get 404 page from a guaranteed-random route
   console.log('  Fetching 404 page...');
   try {
-    const res404 = await fetch(`${SITE_ORIGIN}/this-page-does-not-exist-404`, {
+    const nonce = `__framer_export_404_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const res404 = await fetch(`${SITE_ORIGIN}/${nonce}`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' },
       redirect: 'manual'
     });
@@ -483,6 +520,28 @@ async function main() {
     await downloadAsset(ogMatch[1].replace(/&amp;/g, '&'), '/og-image.png');
   }
 
+  // Step 4b: Download common root assets if present.
+  // These are fetched opportunistically for deployment completeness.
+  console.log('\n📎 Downloading common root assets...');
+  const commonRootAssets = [
+    '/favicon.ico',
+    '/robots.txt',
+    '/manifest.json',
+    '/site.webmanifest',
+    '/apple-touch-icon.png',
+    '/browserconfig.xml',
+    '/sitemap.xml',
+    '/sitemap_index.xml',
+    '/sitemap-index.xml',
+  ];
+  let commonDownloaded = 0;
+  for (const assetPath of commonRootAssets) {
+    if (await downloadSiteFile(assetPath)) commonDownloaded++;
+  }
+  if (commonDownloaded === 0) {
+    console.log('  No additional common root assets found');
+  }
+
   // Step 5: Rewrite and save HTML
   console.log('\n✏️  Rewriting HTML...');
   for (const [file, html] of pageHtmls) {
@@ -494,6 +553,7 @@ async function main() {
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, processed, 'utf-8');
     console.log(`  ✓ ${file} (${(processed.length / 1024).toFixed(0)}KB)`);
+
   }
 
   // Summary
