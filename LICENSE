@@ -1,0 +1,49 @@
+No-SaaS-Usage Community License v1
+
+Copyright (c) 2026 Vojtěch Hájíček
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the conditions below.
+
+## Permitted Uses
+
+The following uses are explicitly permitted:
+
+* Using the Software to generate, export, or migrate websites or assets.
+* Use generated output in commercial projects and client deliverables.
+* Providing consulting, freelance, agency, or manual migration services using the Software.
+* Internal business use.
+* Forking, modifying, and redistributing the Software or derivative works.
+* Charging for implementation, migration, customization, integration, maintenance, or consulting services performed using the Software.
+
+## Restricted Uses
+
+You may not use the Software, or any modified or derivative version of the Software, to operate, provide, market, or distribute:
+
+* a hosted or automated website conversion service,
+* a self-service SaaS product,
+* an API service,
+* a platform,
+* or any substantially similar automated commercial offering
+
+where users upload, connect, submit, or provide Framer projects, Framer URLs, or Framer content for automated conversion, export, migration, or static-site generation.
+
+This restriction applies whether the service is paid or free.
+
+## Clarification
+
+The restriction above does NOT prohibit:
+
+* manually performing migrations for clients,
+* charging for migration work,
+* charging for engineering or consulting time,
+* delivering generated output to customers,
+* using the Software internally within a company,
+* or incorporating generated output into commercial products.
+
+## Attribution
+
+Redistributions of source code must retain this license text and copyright notice.
+
+## No Warranty
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

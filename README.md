@@ -147,3 +147,20 @@ dist/
 - **Route discovery** — routes are found via sitemap.xml + internal link crawl.
   CMS-backed routes that are not linked from any page and not in the sitemap will be
   missed.
+
+## License
+
+This project is source-available under the No-SaaS-Usage Community License v1.
+
+You may:
+
+* use it commercially,
+* use generated output in commercial/client work,
+* provide freelance or agency migration services,
+* fork and modify the code.
+
+You may not:
+
+* run an automated hosted/SaaS conversion platform based on this project or its derivatives.
+
+See LICENSE for full terms.
